@@ -100,7 +100,7 @@ def setup(
     
     checkpoint_dir = auto_download_checkpoint(model_name=checkpoint_dir, access_token=access_token)
     pprint(locals())
-    data = OASSTGuanaco(json_path=Path("seed_data/seed_data_processed_2.jsonl"))
+    data = OASSTGuanaco(json_path=Path("Data/seed_data/seed_data_processed_2.jsonl"))
     data.prompt_style = AlpacaReverse()  # Use the custom reverse prompt style.
 
     devices = parse_devices(devices)

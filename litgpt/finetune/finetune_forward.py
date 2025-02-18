@@ -24,7 +24,7 @@ from torchmetrics import RunningMean
 
 from litgpt.args import EvalArgs, TrainArgs
 from litgpt.data import DataModule, SFTDataset, get_sft_collate_fn
-from litgpt.data.oasst_guanaco import OASSTGuanaco
+from litgpt.data.oasst_seed_data import OASST_Seed
 from litgpt.generate.base import generate
 from litgpt.lora import GPT, Block, Config, lora_filter, mark_only_lora_as_trainable
 from litgpt.prompts import save_prompt_style, PromptStyle, Alpaca
@@ -85,9 +85,9 @@ def setup(
 ) -> None:
     """
     Finetune a model using the LoRA method.
-    This version is modified for finetuning the Llama-3.3-70B-Instruct model using a reversed
+    This version is modified for finetuning the Llama-3.3-70B-Instruct model using an
     instruction dataset. In particular, if no custom data module is provided, it will load the dataset
-    from 'oasst-guanaco_reversed.jsonl' and set its prompt style to 'AlpacaReverse' (which should be defined
+    from 'seed_data' and set its prompt style to 'Alpaca' (which should be defined
     in litgpt.prompts).
     """
     print("Starting the finetuning process ...")
@@ -95,10 +95,9 @@ def setup(
     
     checkpoint_dir = auto_download_checkpoint(model_name=checkpoint_dir, access_token=access_token)
     pprint(locals())
-    data = OASSTGuanaco(json_path=Path("seed_data/seed_data_processed.jsonl"))
-    data.prompt_style = Alpaca()
+    data = OASST_Seed(json_path=Path("Data/seed_data/seed_data_processed.jsonl"))
+    data.prompt_style = Alpaca()  
     print(f"Data: {data} using prompt style: {data.prompt_style}")
-    # data.prompt_style = Alpaca()  
 
     devices = parse_devices(devices)
     print(f"Devices: {devices}")

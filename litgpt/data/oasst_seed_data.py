@@ -11,19 +11,19 @@ from lightning_utilities.core.imports import RequirementCache
 from torch.utils.data import DataLoader, random_split
 
 from litgpt.data import DataModule, SFTDataset, get_sft_collate_fn
-from litgpt.prompts import PromptStyle, AlpacaReverse
+from litgpt.prompts import PromptStyle, Alpaca
 from litgpt.tokenizer import Tokenizer
 
 @dataclass
-class OASSTGuanaco(DataModule):
+class OASST_Seed(DataModule):
     """
-    Data module for the reversed OASST‐Guanaco dataset.
+    Data module for the reversed OASST‐Seed dataset.
     Each line in the provided JSONL file should be a JSON object with keys:
       - "instruction": the original human prompt,
       - "input": an empty string (or any additional context),
       - "output": the assistant response.
       
-    The prompt_style is set to "alpacareverse" by default (which should be defined in litgpt.prompts).
+    The prompt_style is set to "alpaca" by default (which should be defined in litgpt.prompts).
     """
     # Settings for the prompt style and data splitting
     mask_prompt: bool = False
@@ -38,7 +38,7 @@ class OASSTGuanaco(DataModule):
     """How many DataLoader processes to use for loading."""
 
     # Local path to the reversed dataset file (JSONL format)
-    json_path: Path = Path("Data/seed_data/seed_data_processed_2.jsonl")
+    json_path: Path = Path("Data/seed_data/seed_data_processed.jsonl")
     
     # Fields to be set later
     tokenizer: Optional[Tokenizer] = field(default=None, init=False, repr=False)
@@ -49,11 +49,7 @@ class OASSTGuanaco(DataModule):
     
     def __post_init__(self) -> None:
         super().__init__()
-        # self.prompt_style = AlpacaReverse()
-        if isinstance(self.prompt_style, str):
-            self.prompt_style = PromptStyle.from_name(self.prompt_style)
-        else:
-            self.prompt_style = AlpacaReverse()
+        self.prompt_style = Alpaca()
     
     def connect(
         self, tokenizer: Optional[Tokenizer] = None, batch_size: int = 1, max_seq_length: Optional[int] = None
