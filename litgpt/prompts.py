@@ -55,6 +55,20 @@ class Alpaca(PromptStyle):
             f"### Instruction:\n{prompt}\n\n### Response:\n"
         )
 
+class AlpacaReverse(PromptStyle):
+    def apply(self, prompt: str, **kwargs: str) -> str:
+        # Here, "prompt" is the response and the model is expected to generate the instruction.
+        if kwargs.get("input"):
+            return (
+                "Below is a response to a task, paired with an input that provides further context. "
+                "Write an instruction that could have generated this response.\n\n"
+                f"### Response:\n{prompt}\n\n### Input:\n{kwargs['input']}\n\n### Instruction:\n"
+            )
+        return (
+            "Below is a response to a task. "
+            "Write an instruction that could have generated this response.\n\n"
+            f"### Response:\n{prompt}\n\n### Instruction:\n"
+        )
 
 class FLAN(PromptStyle):
     def apply(self, prompt: str, **kwargs: str) -> str:
@@ -374,6 +388,7 @@ class Salamandra(ChatML):
 prompt_styles: Dict[str, Type[PromptStyle]] = {
     # Dataset-specific prompt styles
     "alpaca": Alpaca,
+    "alpacareverse": AlpacaReverse,
     "flan": FLAN,
     "longform": Longform,
     # Model-specific prompt styles

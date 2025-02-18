@@ -21,6 +21,7 @@ __all__ = [
     "Alpaca",
     "Alpaca2k",
     "AlpacaGPT4",
+    "OASSTGuanaco",
     "Deita",
     "FLAN",
     "JSON",

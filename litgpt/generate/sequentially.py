@@ -27,7 +27,7 @@ from litgpt.config import Config
 from litgpt.tokenizer import Tokenizer
 import litgpt.generate.base as generate_base
 from litgpt.model import Block, build_mask_cache
-from litgpt.prompts import PromptStyle, has_prompt_style, load_prompt_style
+from litgpt.prompts import PromptStyle, has_prompt_style, load_prompt_style, AlpacaReverse
 from litgpt.utils import (
     check_valid_checkpoint_dir,
     extend_checkpoint_dir,
@@ -144,8 +144,8 @@ def replace_device(module: torch.nn.Module, replace: torch.device, by: torch.dev
 
 @torch.inference_mode()
 def main(
-    checkpoint_dir: Path,
-    prompt: str = "What food do llamas eat?",
+    checkpoint_dir: Path = Path("checkpoints/meta-llama/Meta-Llama-3.1-8B-Instruct/out/finetune/lora/final"),
+    prompt: str = "Yes. Given that you're requesting information on the game of Go played in 1945, the two players were Hashimoto Utaro and Iwamoto Kaoru, who was vying for the title. The referee for that game was Segoe Kensaku.",
     *,
     num_samples: int = 1,
     max_new_tokens: int = 50,
@@ -188,7 +188,8 @@ def main(
         precision: Indicates the Fabric precision setting to use.
         compile: Whether to compile the model.
     """
-    checkpoint_dir = extend_checkpoint_dir(checkpoint_dir)
+    # checkpoint_dir = extend_checkpoint_dir(checkpoint_dir)
+    checkpoint_dir = Path(checkpoint_dir)
     pprint(locals())
 
     precision = precision or get_default_supported_precision(training=False)
@@ -214,15 +215,16 @@ def main(
     total_devices = CUDAAccelerator.auto_device_count()
     print(f"Using {total_devices} devices", file=sys.stderr)
 
-    check_valid_checkpoint_dir(checkpoint_dir)
+    # check_valid_checkpoint_dir(checkpoint_dir)
     config = Config.from_file(checkpoint_dir / "model_config.yaml")
 
     checkpoint_path = checkpoint_dir / "lit_model.pth"
 
     tokenizer = Tokenizer(checkpoint_dir)
-    prompt_style = (
-        load_prompt_style(checkpoint_dir) if has_prompt_style(checkpoint_dir) else PromptStyle.from_config(config)
-    )
+    prompt_style = AlpacaReverse()
+    # prompt_style = (
+    #     load_prompt_style(checkpoint_dir) if has_prompt_style(checkpoint_dir) else PromptStyle.from_config(config)
+    # )
     prompt = prompt_style.apply(prompt)
     encoded = tokenizer.encode(prompt, device=fabric.device)
     prompt_length = encoded.size(0)
@@ -278,3 +280,6 @@ def main(
             f"Time for inference {i + 1}: {t:.02f} sec total, {tokens_generated / t:.02f} tokens/sec", file=sys.stderr
         )
     print(f"Memory used: {torch.cuda.max_memory_allocated() / 1e9:.02f} GB", file=sys.stderr)
+
+if __name__ == "__main__":
+    main()
