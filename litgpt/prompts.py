@@ -70,6 +70,15 @@ class AlpacaReverse(PromptStyle):
             f"### Response:\n{prompt}\n\n### Instruction:\n"
         )
 
+class RankingPair(PromptStyle):
+    def apply(self, instruction: str, output: str, **kwargs: str) -> str:
+        return (
+            f"Instruction: {instruction}\n"
+            f"Output: {output}\n\n"
+            "Rank the quality of this instruction-output pair on a scale from 1 to 5, where 1 is the worst response to that instruction and 5 is the best response to that instruction."
+            "Answer with only the number."
+        )
+    
 class FLAN(PromptStyle):
     def apply(self, prompt: str, **kwargs: str) -> str:
         return (
