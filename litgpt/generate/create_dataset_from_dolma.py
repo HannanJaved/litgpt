@@ -21,6 +21,7 @@ from lightning.fabric.plugins import BitsandbytesPrecision
 from lightning.fabric.utilities.init import _materialize_meta_tensors
 from typing_extensions import Type
 from tqdm import tqdm
+import json
 
 from litgpt.model import GPT
 from litgpt.config import Config
@@ -145,9 +146,11 @@ def replace_device(module: torch.nn.Module, replace: torch.device, by: torch.dev
 @torch.inference_mode()
 def main(
     checkpoint_dir: Path = Path("checkpoints/meta-llama/Meta-Llama-3.1-8B-Instruct/out/finetune/lora/backward/final"),
-    prompt: str = "Yes. Given that you're requesting information on the game of Go played in 1945, the two players were Hashimoto Utaro and Iwamoto Kaoru, who was vying for the title. The referee for that game was Segoe Kensaku.",
+    prompt_file: Optional[str] = "Data/dolma/dolma-v1_6-sample/one_file_filtered_dolma.json",  # file containing a JSON array of prompts
+    prompt: str = "Default prompt",
+    output_json_file: Optional[str] = "Data/dolma/dolma-v1_6-sample/one_file_response_prompt_dolma.json",  # file to save the generated responses to  
     *,
-    num_samples: int = 1,
+    num_samples: int = 1,  # number of samples per prompt
     max_new_tokens: int = 50,
     top_k: Optional[int] = 50,
     top_p: float = 1.0,
@@ -215,70 +218,92 @@ def main(
     total_devices = CUDAAccelerator.auto_device_count()
     print(f"Using {total_devices} devices", file=sys.stderr)
 
-    # check_valid_checkpoint_dir(checkpoint_dir)
     config = Config.from_file(checkpoint_dir / "model_config.yaml")
-
     checkpoint_path = checkpoint_dir / "lit_model.pth"
 
     tokenizer = Tokenizer(checkpoint_dir)
-    prompt_style = AlpacaReverse()
-    # prompt_style = (
-    #     load_prompt_style(checkpoint_dir) if has_prompt_style(checkpoint_dir) else PromptStyle.from_config(config)
-    # )
-    prompt = prompt_style.apply(prompt)
-    encoded = tokenizer.encode(prompt, device=fabric.device)
-    prompt_length = encoded.size(0)
-    max_returned_tokens = prompt_length + max_new_tokens
+    
+    # Container to store prompt-response pairs
+    prompt_response_pairs = []
 
+    # Instantiate and load model
     print(f"Loading model {str(checkpoint_path)!r} with {config.__dict__}", file=sys.stderr)
     t0 = time.perf_counter()
-    # cannot use `init_module` because if bitsandbytes is used, the Linear layers will be replaced
-    # which means that the weights will get quantized on cuda:0 on checkpoint load. we need to load and then convert
-    # still, use init_tensor for the precision
     with fabric.init_tensor(), torch.device("meta"):
         model = GPT(config)
     print(f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds.", file=sys.stderr)
 
     t0 = time.perf_counter()
-    state_dict = torch.load(str(checkpoint_path), mmap=True, map_location="cpu")
-    # TODO: this assumes that the model fits on CPU. Use lazy_load and make the materialization checkpoint aware
+    state_dict = torch.load(str(checkpoint_path), mmap=True, map_location="cpu", weights_only=True)
     model.load_state_dict(state_dict, assign=True)
     print(f"Time to load the model weights: {time.perf_counter() - t0:.02f} seconds.", file=sys.stderr)
 
     model = fabric.setup_module(model, move_to_device=False)
 
-    t0 = time.perf_counter()
-    model = sequential(model, fabric.device, max_returned_tokens, total_devices)
-    print(f"Time to sequential-ize the model: {time.perf_counter() - t0:.02f} seconds.", file=sys.stderr)
+    prompt_style = AlpacaReverse()
 
-    if compile:
-        # TODO: raises an internal compile AssertionError caused by fabric.strategy.precision.forward_context
-        raise NotImplementedError
-        # silence developer warning on nightly builds
-        # https://github.com/pytorch/pytorch/blob/v2.2.0-rc5/torch/_inductor/ir.py#L4166
-        pattern = re.compile(".*DeviceCopy in input program.*")
-        logging.getLogger("torch._inductor.utils").addFilter(lambda record: not pattern.search(record.getMessage()))
-        torch._dynamo.config.automatic_dynamic_shapes = True
-        torch._inductor.config.triton.unique_kernel_names = True
-        torch._inductor.config.coordinate_descent_tuning = True
-        # cannot use cudagraphs because it doesn't support multiple device indices
-        # https://github.com/pytorch/pytorch/blob/v2.2.0-rc5/torch/_inductor/compile_fx.py#L371-L375
-        generate_base.next_token = torch.compile(generate_base.next_token)
+    safe_total_tokens = 4096 
+    safe_new_tokens = 128  
 
-    L.seed_everything(1234)
-    for i in range(num_samples):
-        t0 = time.perf_counter()
-        y = generate_base.generate(
-            model, encoded, max_returned_tokens, temperature=temperature, top_k=top_k, top_p=top_p, eos_id=tokenizer.eos_id
-        )
-        t = time.perf_counter() - t0
-        for block in model.transformer.h:
-            block.attn.kv_cache.reset_parameters()
-        print(tokenizer.decode(y))
-        tokens_generated = y.size(0) - prompt_length
-        print(
-            f"Time for inference {i + 1}: {t:.02f} sec total, {tokens_generated / t:.02f} tokens/sec", file=sys.stderr
-        )
+    # Process prompts sequentially
+    with open(prompt_file, 'r') as f:
+        for line in f:
+            prompt = line.strip()
+            prompt = prompt_style.apply(prompt)
+            encoded = tokenizer.encode(prompt, device=fabric.device)
+            prompt_length = encoded.size(0)
+
+            # If the prompt is too long, truncate it (keep the tail)
+            max_prompt_tokens = safe_total_tokens - safe_new_tokens
+            if prompt_length > max_prompt_tokens:
+                print(f"Prompt length ({prompt_length}) exceeds safe limit. Truncating to {max_prompt_tokens} tokens.")
+                truncated = encoded[-max_prompt_tokens:]
+                # Update encoded and prompt based on the truncated version.
+                encoded = truncated
+                prompt_length = encoded.size(0)
+                prompt = tokenizer.decode(encoded)
+
+            max_returned_tokens = prompt_length + safe_new_tokens
+            
+            model = sequential(model, fabric.device, max_returned_tokens, total_devices)
+
+            for i in range(num_samples):
+                y = generate_base.generate(
+                    model, encoded, max_returned_tokens,
+                    temperature=temperature, top_k=top_k, top_p=top_p, eos_id=tokenizer.eos_id
+                )
+
+                # Reset key-value caches for all transformer blocks
+                for block in model.transformer.h:
+                    block.attn.kv_cache.reset_parameters()
+
+                decoded_response = tokenizer.decode(y)
+                parts = decoded_response.split("### Response:")
+                if len(parts) > 1:
+                    temp = parts[1]
+                    split_parts = temp.split("### Instruction:")
+                    if len(split_parts) > 1:
+                        output_text = split_parts[0].strip()
+                        instruction_text = split_parts[1].strip()
+                    else:
+                        # If no instruction marker found, use everything as output.
+                        output_text = temp.strip()
+                        instruction_text = ""
+                else:
+                    # Fallback in case the expected headers are missing.
+                    output_text = decoded_response.strip()
+                    instruction_text = ""
+
+                prompt_response_pairs.append({
+                    "instruction": instruction_text,
+                    "output": output_text,
+                })
+
+    # Save all prompt-response pairs to an output JSON file
+    with open(output_json_file, "w", encoding="utf-8") as outfile:
+        json.dump(prompt_response_pairs, outfile, ensure_ascii=False, indent=2)
+    print(f"Saved responses to {output_json_file}", file=sys.stderr)
+
     print(f"Memory used: {torch.cuda.max_memory_allocated() / 1e9:.02f} GB", file=sys.stderr)
 
 if __name__ == "__main__":
